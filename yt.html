@@ -1,34 +1,468 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8">
-  <meta name="referrer" content="strict-origin-when-cross-origin">
-  <title>YouTube player</title>
-  <style>
-    html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
-    iframe { display: block; width: 100%; height: 100%; border: 0; }
-    p { color: #ccc; font: 14px system-ui, sans-serif; padding: 16px; }
-  </style>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="strict-origin-when-cross-origin">
+<title>QuadWatch — four YouTube videos on one screen</title>
+<meta name="description" content="Paste up to four YouTube links and watch them side by side. Resize each video, then share the whole wall as one link. Made for wide monitors.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Condensed:wght@600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --room: #161b24;   /* control-room slate */
+    --desk: #1f2733;   /* raised surfaces */
+    --edge: #344052;   /* lines and dividers */
+    --ink: #f3efe4;    /* text */
+    --mute: #9aa6b8;   /* secondary text */
+    --amber: #f5b63a;  /* actions and focus */
+    --red: #ef6a5f;    /* problems only */
+    --gap: 6px;
+    --bar-h: 44px;
+    --body: "Barlow", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    --display: "Barlow Condensed", "Arial Narrow", "Roboto Condensed", ui-sans-serif, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; min-height: 100%; background: var(--room); color: var(--ink); font: 400 16px/1.5 var(--body); }
+  a { color: var(--amber); text-underline-offset: 3px; }
+  :focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }
+  [hidden] { display: none !important; }
+
+  .btn { font: 500 15px/1 var(--body); padding: 10px 16px; border-radius: 4px; border: 1px solid var(--edge); background: transparent; color: var(--ink); cursor: pointer; }
+  .btn:hover { border-color: var(--mute); }
+  .btn.primary { background: var(--amber); border-color: var(--amber); color: #1a1405; font-weight: 600; padding: 14px 22px; font-size: 17px; }
+  .btn.primary:hover { background: #ffc85a; border-color: #ffc85a; }
+  .btn.primary:disabled { background: var(--desk); border-color: var(--edge); color: var(--mute); cursor: default; }
+
+  /* ---------- Top bar (watch mode) ---------- */
+  #bar { position: fixed; inset: 0 0 auto 0; height: var(--bar-h); z-index: 6; display: none; align-items: center; gap: 8px; padding: 0 10px 0 14px; background: var(--desk); border-bottom: 1px solid var(--edge); }
+  #bar .brand { font: 600 22px/1 var(--display); letter-spacing: .01em; margin-right: auto; }
+  #bar .btn { padding: 8px 12px; font-size: 14px; }
+  #reveal { position: fixed; inset: 0 0 auto 0; height: 8px; z-index: 6; display: none; border: 0; padding: 0; background: var(--edge); cursor: pointer; }
+  #reveal:hover { background: var(--amber); }
+  body[data-mode="watch"] #bar { display: flex; }
+  body[data-mode="watch"].clean #bar { display: none; }
+  body[data-mode="watch"].clean #reveal { display: block; }
+
+  /* ---------- Setup page ---------- */
+  #setup { display: none; max-width: 1500px; margin: 0 auto; padding: clamp(20px, 4vh, 56px) clamp(20px, 5vw, 72px) 40px; }
+  body[data-mode="setup"] #setup { display: block; }
+  .hero { display: grid; grid-template-columns: minmax(320px, 5fr) 7fr; gap: clamp(28px, 5vw, 80px); align-items: start; }
+  .brandline { font: 600 22px/1 var(--display); margin: 0 0 clamp(20px, 4vh, 48px); }
+  .pitch { container-type: inline-size; min-width: 0; }
+  h1 { font: 600 clamp(40px, 14.5cqi, 128px)/.92 var(--display); letter-spacing: -.01em; margin: 0 0 24px; }
+  h1 span { display: block; white-space: nowrap; }
+  .lede { font-size: 19px; line-height: 1.5; max-width: 34em; margin: 0 0 32px; color: var(--ink); }
+  label.field { display: block; font-weight: 500; margin: 0 0 8px; }
+  textarea { display: block; width: 100%; min-height: 136px; resize: vertical; padding: 12px 14px; border-radius: 4px; border: 1px solid var(--edge); background: #10141b; color: var(--ink); font: 400 16px/1.6 var(--body); }
+  textarea::placeholder { color: #6f7b8d; }
+  #status { min-height: 1.5em; margin: 10px 0 18px; color: var(--mute); }
+  #status.bad { color: var(--red); }
+  .actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+
+  /* The preview wall: shows how the screen will be divided */
+  .wall { margin: 0; }
+  .wall .screen { aspect-ratio: 21 / 9; display: grid; gap: 6px; padding: 6px; background: #0b0e13; border: 1px solid var(--edge); border-radius: 6px; grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; }
+  .wall .screen[data-count="1"] { grid-template-columns: 1fr; grid-template-rows: 1fr; }
+  .wall .screen[data-count="2"] { grid-template-rows: 1fr; }
+  .tile { position: relative; overflow: hidden; min-height: 0; background: var(--desk); display: flex; align-items: flex-end; }
+  .tile img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+  .tile .tag { position: relative; z-index: 1; font: 500 13px/1 var(--body); padding: 6px 9px; background: rgba(11, 14, 19, .86); color: var(--ink); }
+  .tile.empty { background: repeating-linear-gradient(135deg, #1b222d 0 10px, #1f2733 10px 20px); }
+  .tile.empty .tag { color: var(--mute); }
+  .tile.empty::after { content: ""; position: absolute; inset: auto 0 0 0; height: 5px; background: linear-gradient(90deg, #c8c8c8 0 14.28%, #c9c63c 0 28.57%, #46c6c6 0 42.85%, #45c348 0 57.14%, #c44cc4 0 71.42%, #c5403d 0 85.71%, #3d44c2 0); opacity: .55; }
+  .wall figcaption { margin-top: 10px; color: var(--mute); font-size: 15px; }
+
+  .notes { display: grid; grid-template-columns: repeat(3, 1fr); gap: clamp(20px, 3vw, 48px); margin-top: clamp(40px, 7vh, 88px); padding-top: 28px; border-top: 1px solid var(--edge); }
+  .notes h2 { font: 600 24px/1.1 var(--display); margin: 0 0 8px; }
+  .notes p { margin: 0; color: var(--mute); max-width: 32em; }
+  .legal { margin-top: 44px; color: var(--mute); font-size: 14px; max-width: 70em; }
+  .legal a { color: var(--mute); margin-right: 14px; }
+
+  /* ---------- Watch grid ---------- */
+  #grid { position: fixed; inset: var(--bar-h) 0 0 0; display: none; background: #000; }
+  body[data-mode="watch"] #grid { display: grid; }
+  body[data-mode="watch"].clean #grid { top: 8px; }
+  body[data-mode="watch"] { overflow: hidden; }
+  .cell { position: relative; min-width: 0; min-height: 0; background: #000; }
+  .cell iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+  .cell.vacant { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; background: repeating-linear-gradient(135deg, #1b222d 0 14px, #1f2733 14px 28px); color: var(--mute); text-align: center; padding: 16px; }
+  #vbar, #hbar { background: var(--edge); touch-action: none; }
+  #vbar { cursor: col-resize; } #hbar { cursor: row-resize; }
+  #vbar:hover, #hbar:hover, #vbar.active, #hbar.active { background: var(--amber); }
+  #shield { position: fixed; inset: 0; display: none; z-index: 10; }
+  body.dragging #shield { display: block; }
+
+  /* ---------- Single player (used by the extension) ---------- */
+  #solo { position: fixed; inset: 0; width: 100%; height: 100%; border: 0; background: #000; }
+
+  dialog { max-width: 460px; border: 1px solid var(--edge); border-radius: 6px; background: var(--desk); color: var(--ink); padding: 22px 24px; }
+  dialog::backdrop { background: rgba(8, 10, 14, .7); }
+  dialog h2 { font: 600 28px/1 var(--display); margin: 0 0 12px; }
+  dialog p, dialog li { color: var(--mute); margin: 0 0 10px; }
+  dialog ul { padding-left: 20px; margin: 0 0 10px; }
+  kbd { border: 1px solid var(--edge); border-radius: 3px; padding: 0 6px; color: var(--ink); font: inherit; }
+
+  @media (max-width: 900px) {
+    .hero { grid-template-columns: 1fr; }
+    .notes { grid-template-columns: 1fr; }
+    .wall .screen { aspect-ratio: 16 / 9; }
+  }
+  @media (max-width: 700px) {
+    #bar .brand { font-size: 19px; }
+    #bar .btn { padding: 8px 9px; font-size: 13px; }
+    #hide { display: none; }
+  }
+</style>
 </head>
-<body>
-  <script>
-    // Usage: yt.html#v=VIDEO_ID&t=SECONDS  — shows the official YouTube embedded player.
-    (function () {
-      var params = new URLSearchParams(location.hash.slice(1));
-      var id = params.get("v") || "";
-      var start = parseInt(params.get("t") || "0", 10) || 0;
-      if (!/^[A-Za-z0-9_-]{11}$/.test(id)) {
-        document.body.innerHTML = "<p>No video. Use yt.html#v=VIDEO_ID</p>";
-        return;
-      }
-      var frame = document.createElement("iframe");
-      frame.src = "https://www.youtube.com/embed/" + id + "?autoplay=1" + (start ? "&start=" + start : "");
-      frame.allow = "accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen";
-      frame.referrerPolicy = "strict-origin-when-cross-origin";
-      frame.allowFullscreen = true;
-      document.body.appendChild(frame);
-      addEventListener("hashchange", function () { location.reload(); });
-    })();
-  </script>
+<body data-mode="setup">
+
+<!-- Set this to your Chrome Web Store address once the extension is published. -->
+<script>const EXTENSION_URL = "";</script>
+
+<header id="bar">
+  <span class="brand">QuadWatch</span>
+  <button class="btn" id="edit">Edit videos</button>
+  <button class="btn" id="share">Copy link</button>
+  <button class="btn" id="hide" title="Shortcut: H">Hide bar</button>
+  <button class="btn" id="about">About</button>
+</header>
+<button id="reveal" title="Show the bar (H)" aria-label="Show the bar"></button>
+
+<main id="setup">
+  <p class="brandline">QuadWatch</p>
+  <div class="hero">
+    <div class="pitch">
+      <h1><span>Four videos.</span><span>One screen.</span></h1>
+      <p class="lede">Paste up to four YouTube links and watch them side by side. Give one video more room by dragging the dividers, then share the whole wall as a single link.</p>
+      <form id="form">
+        <label class="field" for="links">YouTube links, one per line</label>
+        <textarea id="links" spellcheck="false" autocomplete="off" placeholder="https://www.youtube.com/watch?v=…&#10;https://youtu.be/…"></textarea>
+        <p id="status" role="status">Paste a link to see how your screen will be divided.</p>
+        <div class="actions">
+          <button class="btn primary" id="go" disabled>Watch videos</button>
+          <button class="btn" type="button" id="cancel" hidden>Back to the videos</button>
+        </div>
+      </form>
+    </div>
+    <figure class="wall">
+      <div class="screen" id="preview" data-count="4"></div>
+      <figcaption id="caption">Your screen, divided four ways.</figcaption>
+    </figure>
+  </div>
+
+  <section class="notes" aria-label="How it works">
+    <div>
+      <h2>Resize as you watch</h2>
+      <p>Pull the divider between two videos to make one bigger. Double-click a divider to even them out again.</p>
+    </div>
+    <div>
+      <h2>Share the wall</h2>
+      <p>Copy link gives you one address that opens the same videos, at the same start times, for anyone.</p>
+    </div>
+    <div>
+      <h2>Skip the pasting</h2>
+      <p id="ext">The Quad View extension for Chrome sends your open YouTube tabs here in one click. It is coming to the Chrome Web Store soon.</p>
+    </div>
+  </section>
+
+  <p class="legal">QuadWatch plays videos with the YouTube embedded player and is not affiliated with YouTube. Videos whose owners turned off embedding will not play here. Your list of videos is kept only in this browser.<br>
+    <a href="https://www.youtube.com/t/terms" target="_blank" rel="noopener">YouTube Terms of Service</a>
+    <a href="https://www.google.com/policies/privacy" target="_blank" rel="noopener">Google Privacy Policy</a>
+  </p>
+</main>
+
+<div id="grid"></div>
+<div id="shield"></div>
+
+<dialog id="info">
+  <h2>About QuadWatch</h2>
+  <ul>
+    <li>Drag a divider to resize. Double-click it to reset.</li>
+    <li>Press <kbd>H</kbd> to hide or show the top bar.</li>
+    <li>Edit videos lets you change, add or remove links.</li>
+    <li>Each video starts when you press play.</li>
+  </ul>
+  <p>QuadWatch uses the YouTube embedded player (YouTube API Services) and is not affiliated with YouTube. By watching you agree to the <a href="https://www.youtube.com/t/terms" target="_blank" rel="noopener">YouTube Terms of Service</a>. See the <a href="https://www.google.com/policies/privacy" target="_blank" rel="noopener">Google Privacy Policy</a>. Your list of videos is kept only in this browser.</p>
+  <form method="dialog"><button class="btn">Close</button></form>
+</dialog>
+
+<script>
+"use strict";
+const KEY = "quadwatch.state";
+const MAX = 4;
+const $ = (id) => document.getElementById(id);
+
+/** Returns { id, start } for a YouTube link or a bare 11-character id, else null. */
+function parseVideo(text) {
+  const t = String(text || "").trim();
+  if (/^[A-Za-z0-9_-]{11}$/.test(t)) return { id: t, start: 0 };
+  let u;
+  try { u = new URL(/^https?:\/\//i.test(t) ? t : "https://" + t); } catch (_) { return null; }
+  const host = u.hostname.replace(/^(www|m|music)\./, "");
+  let id = null;
+  if (host === "youtu.be") id = u.pathname.slice(1).split("/")[0];
+  else if (host === "youtube.com" || host === "youtube-nocookie.com") {
+    if (u.pathname === "/watch") id = u.searchParams.get("v");
+    else {
+      const m = u.pathname.match(/^\/(?:shorts|live|embed)\/([^/?#]+)/);
+      if (m) id = m[1];
+    }
+  }
+  if (!id || !/^[A-Za-z0-9_-]{11}$/.test(id)) return null;
+  const raw = u.searchParams.get("t") || u.searchParams.get("start") || "";
+  let start = 0;
+  if (/^\d+s?$/.test(raw)) start = parseInt(raw, 10);
+  else if (raw) {
+    const m = raw.match(/^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?$/);
+    if (m) start = (+m[1] || 0) * 3600 + (+m[2] || 0) * 60 + (+m[3] || 0);
+  }
+  return { id, start };
+}
+const watchUrl = (v) => "https://www.youtube.com/watch?v=" + v.id + (v.start ? "&t=" + v.start + "s" : "");
+const encode = (list) => list.map((v) => v.id + (v.start ? "." + v.start : "")).join(",");
+function decode(text) {
+  return String(text || "").split(",").map((part) => {
+    const m = part.match(/^([A-Za-z0-9_-]{11})(?:\.(\d+))?$/);
+    return m ? { id: m[1], start: +m[2] || 0 } : null;
+  }).filter(Boolean).slice(0, MAX);
+}
+function playerFrame(video, title) {
+  const frame = document.createElement("iframe");
+  frame.src = "https://www.youtube.com/embed/" + video.id + "?playsinline=1" + (video.start ? "&start=" + video.start : "");
+  frame.title = title;
+  frame.allow = "accelerometer; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen";
+  frame.referrerPolicy = "strict-origin-when-cross-origin";
+  frame.allowFullscreen = true;
+  return frame;
+}
+
+const state = { videos: [], x: 0.5, y: 0.5 };
+
+function save() {
+  try { localStorage.setItem(KEY, JSON.stringify({ v: encode(state.videos), x: state.x, y: state.y })); } catch (_) {}
+  const hash = state.videos.length ? "#v=" + encode(state.videos) : "";
+  try { history.replaceState(null, "", location.pathname + location.search + hash); } catch (_) {}
+}
+function restore() {
+  let saved = {};
+  try { saved = JSON.parse(localStorage.getItem(KEY)) || {}; } catch (_) {}
+  if (saved.x > 0.1 && saved.x < 0.9) state.x = saved.x;
+  if (saved.y > 0.1 && saved.y < 0.9) state.y = saved.y;
+  // A link (#v=… or ?v=…) wins over what this browser remembered.
+  const linked = new URLSearchParams(location.hash.slice(1)).get("v") || new URLSearchParams(location.search).get("v");
+  state.videos = decode(linked !== null ? linked : saved.v);
+}
+
+/* ---------- Setup page ---------- */
+const links = $("links"), statusEl = $("status"), goBtn = $("go"), preview = $("preview"), caption = $("caption");
+const COUNT_WORD = ["", "one video, full screen", "two videos, side by side", "three videos and a free corner", "four videos, two by two"];
+
+/** Reads the textarea: the videos found (max four) and what was wrong, if anything. */
+function readLinks() {
+  const lines = links.value.split(/[\n,]+/).map((line) => line.trim()).filter(Boolean);
+  const found = [], badLines = [];
+  lines.forEach((line, n) => {
+    const video = parseVideo(line);
+    if (video) found.push(video); else badLines.push(n + 1);
+  });
+  return { videos: found.slice(0, MAX), extra: Math.max(0, found.length - MAX), badLines };
+}
+function drawPreview(videos) {
+  const tiles = videos.length <= 2 ? Math.max(videos.length, 1) : MAX;
+  preview.dataset.count = videos.length ? tiles : MAX;
+  preview.textContent = "";
+  for (let i = 0; i < (videos.length ? tiles : MAX); i++) {
+    const tile = document.createElement("div");
+    const tag = document.createElement("span");
+    tag.className = "tag";
+    if (videos[i]) {
+      tile.className = "tile";
+      const img = document.createElement("img");
+      img.alt = "";
+      img.src = "https://i.ytimg.com/vi/" + videos[i].id + "/mqdefault.jpg";
+      img.addEventListener("error", () => img.remove());
+      tile.append(img);
+      tag.textContent = "Video " + (i + 1);
+    } else {
+      tile.className = "tile empty";
+      tag.textContent = "Empty";
+    }
+    tile.append(tag);
+    preview.append(tile);
+  }
+  caption.textContent = videos.length ? "Your screen: " + COUNT_WORD[videos.length] + "." : "Your screen, divided four ways.";
+}
+function refreshSetup() {
+  const { videos, extra, badLines } = readLinks();
+  drawPreview(videos);
+  statusEl.className = "";
+  if (badLines.length) {
+    statusEl.className = "bad";
+    statusEl.textContent = (badLines.length === 1 ? "Line " + badLines[0] + " is" : "Lines " + badLines.join(", ") + " are") + " not a YouTube video link. Check " + (badLines.length === 1 ? "it" : "them") + " or remove " + (badLines.length === 1 ? "it." : "them.");
+  } else if (extra) {
+    statusEl.textContent = "QuadWatch shows four videos at a time. The first four links will be used.";
+  } else if (videos.length) {
+    statusEl.textContent = videos.length === 1 ? "1 video ready. Add up to three more." : videos.length + " videos ready.";
+  } else {
+    statusEl.textContent = location.protocol === "file:"
+      ? "You opened this page as a file. Videos only play once the page is on a website."
+      : "Paste a link to see how your screen will be divided.";
+  }
+  goBtn.disabled = !videos.length;
+  goBtn.textContent = videos.length ? "Watch " + (videos.length === 1 ? "1 video" : videos.length + " videos") : "Watch videos";
+}
+links.addEventListener("input", refreshSetup);
+links.addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) $("form").requestSubmit(); });
+$("form").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const { videos } = readLinks();
+  if (!videos.length) return;
+  state.videos = videos;
+  save();
+  setMode("watch");
+});
+function openSetup() {
+  links.value = state.videos.map(watchUrl).join("\n");
+  $("cancel").hidden = !state.videos.length;
+  refreshSetup();
+  setMode("setup");
+  links.focus();
+}
+$("edit").addEventListener("click", openSetup);
+$("cancel").addEventListener("click", () => setMode("watch"));
+
+if (EXTENSION_URL) {
+  const p = $("ext");
+  p.textContent = "The Quad View extension for Chrome sends your open YouTube tabs here in one click. ";
+  const a = document.createElement("a");
+  a.href = EXTENSION_URL; a.target = "_blank"; a.rel = "noopener";
+  a.textContent = "Add Quad View to Chrome";
+  p.append(a);
+}
+
+/* ---------- Watch grid ---------- */
+const grid = $("grid");
+let vbar = null, hbar = null;
+
+function layout() {
+  const n = state.videos.length;
+  const col = `${state.x}fr var(--gap) ${1 - state.x}fr`;
+  const row = `${state.y}fr var(--gap) ${1 - state.y}fr`;
+  grid.style.gridTemplateColumns = n === 1 ? "1fr" : col;
+  grid.style.gridTemplateRows = n <= 2 ? "1fr" : row;
+}
+function buildGrid() {
+  const n = state.videos.length;
+  grid.textContent = "";
+  vbar = hbar = null;
+  const slots = n <= 2 ? n : MAX;
+  for (let i = 0; i < slots; i++) {
+    const cell = document.createElement("section");
+    cell.className = "cell";
+    cell.style.gridColumn = String(n === 1 ? 1 : (i % 2) * 2 + 1);
+    cell.style.gridRow = String(n <= 2 ? 1 : Math.floor(i / 2) * 2 + 1);
+    if (state.videos[i]) {
+      cell.append(playerFrame(state.videos[i], "YouTube video " + (i + 1)));
+    } else {
+      cell.classList.add("vacant");
+      const note = document.createElement("span");
+      note.textContent = "This corner is free.";
+      const add = document.createElement("button");
+      add.className = "btn";
+      add.textContent = "Add a video";
+      add.addEventListener("click", openSetup);
+      cell.append(note, add);
+    }
+    grid.append(cell);
+  }
+  if (n >= 2) {
+    vbar = document.createElement("div");
+    vbar.id = "vbar";
+    vbar.title = "Drag to resize. Double-click to reset.";
+    vbar.style.gridColumn = "2";
+    vbar.style.gridRow = "1 / -1";
+    grid.append(vbar);
+    drag(vbar, "x");
+  }
+  if (n >= 3) {
+    hbar = document.createElement("div");
+    hbar.id = "hbar";
+    hbar.title = "Drag to resize. Double-click to reset.";
+    hbar.style.gridRow = "2";
+    hbar.style.gridColumn = "1 / -1";
+    grid.append(hbar);
+    drag(hbar, "y");
+  }
+  layout();
+}
+function drag(bar, axis) {
+  bar.addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+    bar.setPointerCapture(e.pointerId);
+    bar.classList.add("active");
+    document.body.classList.add("dragging");
+  });
+  bar.addEventListener("pointermove", (e) => {
+    if (!bar.hasPointerCapture(e.pointerId)) return;
+    const box = grid.getBoundingClientRect();
+    const v = axis === "x" ? (e.clientX - box.left) / box.width : (e.clientY - box.top) / box.height;
+    state[axis] = Math.min(0.85, Math.max(0.15, v));
+    layout();
+  });
+  const stop = (e) => {
+    if (bar.hasPointerCapture(e.pointerId)) bar.releasePointerCapture(e.pointerId);
+    bar.classList.remove("active");
+    document.body.classList.remove("dragging");
+    save();
+  };
+  bar.addEventListener("pointerup", stop);
+  bar.addEventListener("pointercancel", stop);
+  bar.addEventListener("dblclick", () => { state[axis] = 0.5; layout(); save(); });
+}
+
+/* ---------- Modes and bar ---------- */
+let shown = "";   // which videos the grid currently shows
+function setMode(mode) {
+  document.body.dataset.mode = mode;
+  if (mode === "watch") {
+    const now = encode(state.videos);
+    if (now !== shown) { buildGrid(); shown = now; }   // keep players running if nothing changed
+  }
+}
+const hideBtn = $("hide");
+function toggleBar() { document.body.classList.toggle("clean"); }
+hideBtn.addEventListener("click", toggleBar);
+$("reveal").addEventListener("click", toggleBar);
+addEventListener("keydown", (e) => {
+  if (e.key.toLowerCase() !== "h" || e.metaKey || e.ctrlKey || e.altKey) return;
+  if (document.body.dataset.mode !== "watch" || /^(INPUT|TEXTAREA)$/.test(document.activeElement.tagName)) return;
+  toggleBar();
+});
+const shareBtn = $("share");
+shareBtn.addEventListener("click", async () => {
+  save();
+  let ok = true;
+  try { await navigator.clipboard.writeText(location.href); } catch (_) { ok = false; }
+  shareBtn.textContent = ok ? "Link copied" : "Copy it from the address bar";
+  setTimeout(() => { shareBtn.textContent = "Copy link"; }, 1800);
+});
+$("about").addEventListener("click", () => $("info").showModal());
+
+/* ---------- Start ---------- */
+// Single-player mode for the Quad View extension: /#one=VIDEO_ID or /#one=VIDEO_ID.START
+const solo = decode(new URLSearchParams(location.hash.slice(1)).get("one") || "")[0];
+if (solo) {
+  document.body.dataset.mode = "solo";
+  const frame = playerFrame(solo, "YouTube video");
+  frame.id = "solo";
+  document.body.append(frame);
+} else {
+  restore();
+  if (state.videos.length) setMode("watch"); else { refreshSetup(); setMode("setup"); }
+}
+addEventListener("hashchange", () => { if (/[#&](v|one)=/.test(location.hash)) location.reload(); });
+</script>
 </body>
 </html>
